@@ -27,20 +27,24 @@ def get_mel_amp(wavdata,fs=44100):                         #extracting log mel s
 	melX = np.dot(melW,X)
 	return np.log10(melX)
 
-wav_file_path = 'audio/airport-lisbon-1000-40000-a.wav'                        #audio file
+if __name__ == '__main__':
+	wav_file_path = 'D:\Git\AcousticSceneClassification\data\\airport-barcelona-0-0-a.wav'                        #audio file
 
-_data,_fs = sf.read(wav_file_path)
+	_data,_fs = sf.read(wav_file_path)
+	print(_data.shape)
+	print(_fs)
 
-stft_amp = get_stft_amp(_data,_fs)                      #stft_amp.shape (500, 1001)
-print(stft_amp.shape)
-print('finish spectrogram')
-#for wav in wav_list:
-wav_data=wavio.read(wav_file_path)
-data=wav_data.data.astype(float)/np.power(2,wav_data.sampwidth*8-1)
-data=np.asarray(data)
-mel_amp=get_mel_amp(data[:,0],fs=_fs)                         #mel_amp.shape (128,499)
-print(mel_amp.shape)
-print('finish log mel features')
+	stft_amp = get_stft_amp(_data,_fs)                      #stft_amp.shape (500, 1001)
+	print(stft_amp.shape)
+	print('finish spectrogram')
+	#for wav in wav_list:
+	wav_data=wavio.read(wav_file_path)
+	print(wav_data.data.shape)
+	data=wav_data.data.astype(float)/np.power(2,wav_data.sampwidth*8-1)
+	data=np.asarray(data)
+	mel_amp=get_mel_amp(data[:,0],fs=_fs)                         #mel_amp.shape (128,499)
+	print(mel_amp.shape)
+	print('finish log mel features')
 
 
 
