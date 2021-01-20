@@ -72,7 +72,7 @@ class m_dataset(Dataset):
         print('{} files found'.format(len(files)))
 
         for f in files:
-            if self.dataType == 'evaluate':
+            if self.dataType != 'test':
                 f = f.split('\t')[0]
             self.label.append(LabelTransfer(f[6:].split('-')[0]))
             f = os.path.join(data_path, f)
