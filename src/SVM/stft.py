@@ -5,6 +5,8 @@ import librosa
 import wavio
 import csv
 import os
+from tqdm import tqdm
+import sys
 
 from sklearn.svm import SVC
 from sklearn.pipeline import make_pipeline
@@ -48,62 +50,95 @@ class Solver(object):
     def __init__(self, params) -> None:
         super(Solver, self).__init__()
         self.params = params
-        self.clf = make_pipeline(StandardScaler(), SVC(gamma='auto'))
+        self.clf = make_pipeline(StandardScaler(), SVC(gamma='auto', class_weight='balanced'))
+        self.cluster = {0:[0, 5, 6], 1:[2, 3, 7, 8], 2:[1, 4, 9]}
+        self.d_clf = {}
+        for k in self.cluster.keys():
+            self.d_clf[k] = make_pipeline(StandardScaler(), SVC(gamma='auto'))
 
-    def load_data(self, params, dataType):
+    def load_data(self, params, dataType, label_restrict):
         files = []
+        label = [] #np.zeros(len(files))
         with open(os.path.join(params['data_path'], 'evaluation_setup/fold1_{}.csv'.format(dataType)), 'r') as f:
             r = csv.reader(f)
             for row in r:
                 files.append(row[0])
         files = files[1:]
-        print('{} files found'.format(len(files)))
+        s_files = []
+        for i in range(len(files)):
+            if dataType != 'test':
+                f = files[i].split('\t')[0]
+            l = LabelTransfer(f[6:].split('-')[0])
+            if not label_restrict is None:
+                if l in label_restrict:
+                    label.append(l)
+                    s_files.append(f)
+            else:
+                label.append(l)
+                s_files.append(f)
+        label = np.array(label)
+        print('{} files found'.format(len(s_files)))
 
         feature_fn = None
         data = None
-        label = np.zeros(len(files))
         if params['feature_type'] == 'mel':
-            data = np.zeros((len(files), 128, 499))
+            data = np.zeros((len(s_files), 128 * 499))
             feature_fn = get_mel_amp
         elif params['feature_type'] == 'stft':
-            data = np.zeros((len(files), 500, 1001))
+            data = np.zeros((len(s_files), 500 * 1001))
             feature_fn = get_stft_amp
         else:
             print('feature type unrecognized!')
             raise ValueError
-        
-        for i in range(len(files)):
-            if dataType != 'test':
-                f = files[i].split('\t')[0]
-            label[i] = LabelTransfer(f[6:].split('-')[0])
+
+        print('loading data')
+        for i in tqdm(range(len(s_files))):
+            # if dataType != 'test':
+            #     f = files[i].split('\t')[0]
+            # label[i] = LabelTransfer(f[6:].split('-')[0])
+            f = s_files[i]
             f = os.path.join(params['data_path'], f)
             _data, _fs = sf.read(f)
-            data[i] = feature_fn(_data, _fs)
+            data[i] = feature_fn(_data, _fs).flatten()
+        
+        print(sys.getsizeof(data) / 1024 / 1024 / 1024)
         
         return data, label
             
     def train(self):
         data, label = self.load_data(self.params, 'train')
+        for i in range(label.shape[0]):
+            for k in self.cluster.keys():
+                if label[i] in self.cluster[k]:
+                    label[i] = k
         self.clf.fit(data, label)
+        del data
+        del label
+        for k in self.cluster.keys():
+            data, label = self.load_data(self.params, 'train', self.cluster[k])
+            for i in range(label.shape[0]):
+                label[i] = self.cluster[k].index(label[i])
+            self.clf[k].fit(data, label)
+            del data
+            del label
 
     def evaluate(self):
         data, label = self.load_data(self.params, 'evaluate')
         result = self.clf.predict(data)
+        for i in range(result.shape[0]):
+            r = result[i]
+            d = data[i][np.newaxis, :]
+            r_ = self.d_clf[r].predict(d)
+            r_ = self.cluster[r][r_]
+            result[i] = r_
         print('{:.3f} accuracy'.format((result==label).sum()/label.shape[0]*100))
 
 
 if __name__ == '__main__':
     params = {
-        'test': False,
-        'data_path': 'D:\Git\AcousticSceneClassification\data',
+        'data_path': '/home/v-yuez1/classification/data/train',
         'feature_type': 'stft',
-        'lr': 0.001,
-        'batch_size': 8,
-        'logger_dir': 'results',
-        'saving_dir': 'results',
-        'eval_interval': 10,
-        'epoch': 1000
     }
     solver = Solver(params)
     solver.train()
-    solver.test()
+    solver.evaluate()
