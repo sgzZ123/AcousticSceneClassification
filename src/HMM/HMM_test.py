@@ -1,7 +1,45 @@
-import numpy as np
-import wavio
+from scipy import signal
 import soundfile as sf
+import numpy as np
+import librosa
+import wavio
+import csv
+import os
+from tqdm import tqdm
+import sys
 from get_feature import get_stft_amp,get_mel_amp
+
+def LabelTransfer(label):
+    text2num = {
+        'airport': 0,
+        'bus': 1,
+        'metro_station': 2,
+        'metro': 3,
+        'park': 4,
+        'public_square': 5,
+        'shopping_mall': 6,
+        'street_pedestrian': 7,
+        'street_traffic': 8,
+        'tram': 9
+    }
+    num2text = {
+        0: 'airport',
+        1: 'bus',
+        2: 'metro_station',
+        3: 'metro',
+        4: 'park',
+        5: 'public_square',
+        6: 'shopping_mall',
+        7: 'street_pedestrian',
+        8: 'street_traffic',
+        9: 'tram'
+    }
+    if type(label) == str:
+        return text2num.get(label)
+    elif type(label) == int:
+        return num2text.get(label)
+    else:
+        return None
 
 class HMM:
     """
@@ -128,30 +166,84 @@ class HMM:
         path = list(reversed(path))
         return V[last_state,-1], path
 
+class Solver(object):
+    def __init__(self, params) -> None:
+        super(Solver, self).__init__()
+        self.params = params
+
+    def load_data(self, params, dataType):
+        files = []
+        with open(os.path.join(params['data_path'], 'evaluation_setup/fold1_{}.csv'.format(dataType)), 'r') as f:
+            r = csv.reader(f)
+            for row in r:
+                files.append(row[0])
+        files = files[1:]
+        print('{} files found'.format(len(files)))
+        feature_fn = None
+        data = None
+        label = np.zeros(len(files))
+        if params['feature_type'] == 'mel':
+            data = np.zeros((len(files), 128 * 499))
+            feature_fn = get_mel_amp
+        elif params['feature_type'] == 'stft':
+            data = np.zeros((len(files), 500 * 1001))
+            feature_fn = get_stft_amp
+        else:
+            print('feature type unrecognized!')
+            raise ValueError
+        print('loading data')
+        for i in tqdm(range(len(files))):
+            if dataType != 'test':
+                f = files[i].split('\t')[0]
+            label[i] = LabelTransfer(f[6:].split('-')[0])
+            f = os.path.join(params['data_path'], f)
+            _data, _fs = sf.read(f)
+            data[i] = feature_fn(_data, _fs).flatten()
+        data = data.flatten()
+        data = (-1)*data
+        if params['feature_type'] == 'stft':
+            data = data - 1
+        elif params['feature_type'] == 'mel':
+            data = data + 1
+        print(sys.getsizeof(data) / 1024 / 1024 / 1024)
+        return data, label
+            
+    def train(self):
+        data, label = self.load_data(self.params, 'train')
+        _samples = np.unique(data)
+        print(_samples)
+        n_samples = len(_samples)
+        _label = np.unique(label)
+        n_states = len(_label)
+        A = np.random.dirichlet(np.ones(n_states),size=n_states)
+        B = np.random.dirichlet(np.ones(n_samples),size=n_states)
+        Pi = np.random.dirichlet(np.ones(1),size=n_states)
+        Pi = Pi.flatten()
+        self.hmm = HMM(A,B,Pi)
+        self.hmm.baum_welch_train(data)
+        print("traing finish")
+        
+    def evaluate(self):
+        data, label = self.load_data(self.params, 'evaluate')
+        corr = 0
+        wron = 0
+        for i in range(len(data)):
+            v,path = self.hmm.state_path(data[i])
+            res = max(path,key=path.count)
+            if res == label[i]:
+                corr += 1
+            else:
+                wron += 1
+        print('accuracy',corr/(corr+wron))
+
 if __name__ == '__main__':
-    wav_file_path = 'D:\Git\AcousticSceneClassification\data\airport-barcelona-0-0-a.wav'                        
-    _data,_fs = sf.read(wav_file_path)
-    data = get_stft_amp(_data,_fs)
-    print(data)
-    print('finish spectrogram')
-    data = data.flatten()
-    print(data)
-    data = -1*data
-    data = data-1
-    _samples = np.unique(data)
-    print(_samples)
-    n_samples = len(_samples)
-    print(n_samples)
-    n_states = 5
-    A = np.random.dirichlet(np.ones(n_states),size=n_states)
-    B = np.random.dirichlet(np.ones(n_samples),size=n_states)
-    Pi = np.random.dirichlet(np.ones(n_states),size=1)
-    Pi = Pi.flatten()
-    print(A)
-    print(B)
-    print(Pi)
-    hmm = HMM(A,B,Pi)
-    hmm.baum_welch_train(data[200:500])
-    print(hmm.A)
-    print(hmm.B)
-    print("finish traing")
+    params = {
+        'data_path': '/home/v-yuez1/classification/data/train',
+        'feature_type': 'mel',
+    }
+    solver = Solver(params)
+    solver.train()
+    solver.evaluate()
+            
+
+            
