@@ -200,6 +200,7 @@ class Solver(object):
             _data, _fs = sf.read(f)
             data[i] = feature_fn(_data, _fs).flatten()
         data = data.flatten()
+        data = data.astype(np.int32)
         data = (-1)*data
         if params['feature_type'] == 'stft':
             data = data - 1
