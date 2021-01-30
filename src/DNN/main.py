@@ -61,7 +61,6 @@ class m_dataset(Dataset):
         files = []
         self.data = []
         self.label = []
-        self.fs = []
 
         with open(os.path.join(data_path, 'evaluation_setup/fold1_{}.csv'.format(self.dataType)), 'r') as f:
             r = csv.reader(f)
@@ -77,8 +76,15 @@ class m_dataset(Dataset):
             self.label.append(LabelTransfer(f[6:].split('-')[0]))
             f = os.path.join(data_path, f)
             _data, _fs = sf.read(f)
-            self.data.append(_data)
-            self.fs.append(_fs)
+            if self.feature_type == 'stft':
+                stft_amp = get_stft_amp(_data, fs=_fs)
+                t = np.transpose(stft_amp)
+            elif self.feature_type == 'mel':
+                mel_amp = get_mel_amp(_data, fs=_fs)
+                t = np.transpose(mel_amp)
+            else:
+                raise ValueError
+            self.data.append(t)
             
         print('dataset initialized')
 
@@ -86,16 +92,7 @@ class m_dataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, index):
-        _data = self.data[index]
-        _fs = self.fs[index]
-        if self.feature_type == 'stft':
-            stft_amp = get_stft_amp(_data, fs=_fs)
-            t = stft_amp
-        elif self.feature_type == 'mel':
-            mel_amp = get_mel_amp(_data, fs=_fs)
-            t = mel_amp
-        else:
-            raise ValueError
+        t = self.data[index]
         return torch.tensor(t).float(), torch.tensor(self.label[index]).long()
     
 
@@ -132,12 +129,41 @@ class LinearModel(nn.Module):
         return x
 
 
+class TransModel(nn.Module):
+    def __init__(self, feature_type='stft', output_size=10):
+        super(TransModel, self).__init__()
+        if feature_type == 'stft':
+            d_model = 500
+            self.output_layer = nn.Sequential(
+                nn.Linear(1001*d_model, output_size), 
+                nn.Sigmoid()
+            )
+        elif feature_type == 'mel':
+            d_model = 128
+            self.output_layer = nn.Sequential(
+                nn.Linear(499*d_model, output_size), 
+                nn.Sigmoid()
+            )
+        else:
+            print('unable to find a proper feature type!')
+            raise ValueError
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=4)
+        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=6)
+
+
+    def forward(self, x):
+        x = self.transformer_encoder(x.transpose(0, 1)).transpose(0, 1)
+        x = x.mean(dim=1)
+        x = self.output_layer(x)
+        return x
+
+
 class Solver(object):
     def __init__(self, params) -> None:
         super(Solver, self).__init__()
         self.params = params
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        self.model = LinearModel(params['feature_type'], output_size=10).to(self.device)
+        self.model = TransModel(params['feature_type'], output_size=10).to(self.device)
         if params['test'] == True:
             self.model.load_state_dict(torch.load(params['model_path'], map_location=self.device))
 
@@ -220,9 +246,9 @@ if __name__ == '__main__':
     params = {
         'test': False,
         'data_path': 'D:\Git\AcousticSceneClassification\data',
-        'feature_type': 'stft',
+        'feature_type': 'mel',
         'lr': 0.001,
-        'batch_size': 8,
+        'batch_size': 64,
         'logger_dir': 'results',
         'saving_dir': 'results',
         'eval_interval': 10,
