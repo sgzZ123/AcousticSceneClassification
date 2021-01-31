@@ -52,24 +52,32 @@ def gen_wavlist(datatype):
             for row in reader:
                 files.append(row[0])
         files = files[1:]
+        count = {0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0}
         for i in tqdm(range(len(files))):
             fileid = files[i].split('.')[0]
             label = files[i].split('\t')[1]
-            labeldict[fileid] = LabelTransfer(label)
-            filepath = os.path.join('/home/v-yuez1/classification/data/train',fileid)+'.wav'
-            wavdict[fileid] = filepath
+            label = LabelTransfer(label)
+            count[label] += 1
+            if count[label] < 500:
+                labeldict[fileid] = label
+                filepath = os.path.join('/home/v-yuez1/classification/data/train',fileid)+'.wav'
+                wavdict[fileid] = filepath
     elif datatype=='evaluate':
         with open('fold1_evaluate.csv','r') as f:
             reader = csv.reader(f)
             for row in reader:
                 files.append(row[0])
         files = files[1:]
+        count = {0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0}
         for i in tqdm(range(len(files))):
             fileid = files[i].split('.')[0]
             label = files[i].split('\t')[1]
-            labeldict[fileid] = LabelTransfer(label)
-            filepath = os.path.join('/home/v-yuez1/classification/data/train',fileid)+'.wav'
-            wavdict[fileid] = filepath
+            label = LabelTransfer(label)
+            count[label] += 1
+            if count[label] < 100:
+                labeldict[fileid] = label
+                filepath = os.path.join('/home/v-yuez1/classification/data/train',fileid)+'.wav'
+                wavdict[fileid] = filepath
     else:
         print("------------------data loading wrong!---------------------------")
     return wavdict, labeldict

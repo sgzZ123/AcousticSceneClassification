@@ -16,13 +16,13 @@ def get_stft_amp(wavdata,fs=44100):                         #extracting speech s
 	sub_freq=np.absolute(zxx[0:500,:])                     #the dimension of final feature:200 or 400
 	return np.log10(sub_freq)
 
-def get_mel_amp(wavdata,fs=44100):                         #extracting log mel spectrogram features
+def get_mel_amp(wavdata,fs=44100, n_mels=128):                         #extracting log mel spectrogram features
 	wind_dur = 0.04
 	wind_shift = 0.02
 	window_len = int(wind_dur*fs)
 	overlap=int((wind_dur-wind_shift)*fs)
 	[f,t,X]=signal.spectral.spectrogram(wavdata,window='hamming',nperseg=window_len,noverlap=overlap,nfft=window_len,detrend=False,return_onesided=True,mode='magnitude')
-	melW=librosa.filters.mel(sr=44100,n_fft=window_len,n_mels=128,fmin=0.,fmax=22100)
+	melW=librosa.filters.mel(sr=44100,n_fft=window_len,n_mels=n_mels,fmin=0.,fmax=22100)
 	melW /=  np.max(melW,axis=-1)[:,None] 
 	melX = np.dot(melW,X)
 	return np.log10(melX)

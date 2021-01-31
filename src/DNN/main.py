@@ -10,6 +10,9 @@ import wavio
 import numpy as np
 from tqdm import tqdm
 import csv
+import dcase_util
+from dcase_util.containers import AudioContainer
+from dcase_util.features import MelExtractor
 
 from get_feature import get_stft_amp, get_mel_amp
 
@@ -70,7 +73,7 @@ class m_dataset(Dataset):
         files = files[1:]
         print('{} files found'.format(len(files)))
 
-        for f in files:
+        for f in tqdm(files):
             if self.dataType != 'test':
                 f = f.split('\t')[0]
             self.label.append(LabelTransfer(f[6:].split('-')[0]))
@@ -80,8 +83,12 @@ class m_dataset(Dataset):
                 stft_amp = get_stft_amp(_data, fs=_fs)
                 t = np.transpose(stft_amp)
             elif self.feature_type == 'mel':
-                mel_amp = get_mel_amp(_data, fs=_fs)
-                t = np.transpose(mel_amp)
+                # mel_amp = get_mel_amp(_data, fs=_fs)
+                # t = np.transpose(mel_amp)
+                audio = dcase_util.containers.AudioContainer().load(filename=f,mono=True)
+                mel_extractor = dcase_util.features.MelExtractor(n_mels=40, win_length_seconds=0.04, hop_length_seconds=0.02, fs=audio.fs)
+                mel_data = mel_extractor.extract(y=audio)
+                t = mel_data[:,:500]
             else:
                 raise ValueError
             self.data.append(t)
@@ -94,7 +101,59 @@ class m_dataset(Dataset):
     def __getitem__(self, index):
         t = self.data[index]
         return torch.tensor(t).float(), torch.tensor(self.label[index]).long()
+
+
+class ResBlock(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(ResBlock, self).__init__()
+        self.l1 = nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU()
+        )
+        self.l2 = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU()
+        )
+
+        self.l3 = nn.Sequential(
+            nn.Linear(256, output_size),
+            nn.BatchNorm1d(output_size),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        x = self.l1(x)
+        x = self.l2(x) + x
+        x = self.l3(x)
+        return x
     
+
+class ResLinearModel(nn.Module):
+    def __init__(self, feature_type='stft', output_size=10):
+        super(ResLinearModel, self).__init__()
+        if feature_type == 'stft':
+            input_size = 500*1001
+        elif feature_type == 'mel':
+            input_size = 128*499
+        else:
+            print('unable to find a proper feature type!')
+            raise ValueError
+        self.net1 = ResBlock(input_size, 256)
+        self.net2 = ResBlock(256, 256)
+        self.net3 = ResBlock(256, output_size)
+
+        self.activate_fn = nn.Softmax()
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        x = self.net1(x)
+        x = self.net2(x)
+        x = self.net3(x)
+        x = self.activate_fn(x)
+        return x
+
 
 class LinearModel(nn.Module):
     def __init__(self, feature_type='stft', output_size=10):
@@ -107,11 +166,7 @@ class LinearModel(nn.Module):
             print('unable to find a proper feature type!')
             raise ValueError
         self.net = nn.Sequential(
-            nn.Linear(input_size, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(),
-
-            nn.Linear(1024, 256),
+            nn.Linear(input_size, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
 
@@ -120,7 +175,7 @@ class LinearModel(nn.Module):
             nn.ReLU(),
 
             nn.Linear(64, output_size),
-            nn.Sigmoid()
+            nn.Softmax()
         )
 
     def forward(self, x):
@@ -158,12 +213,42 @@ class TransModel(nn.Module):
         return x
 
 
+class ConvModel(nn.Module):
+    def __init__(self, feature_type='stft', output_size=10):
+        super(ConvModel, self).__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 64, 5, padding=2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 4)),
+            nn.Dropout(0.2),
+
+            nn.Conv2d(64, 64, 5, padding=2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout(0.2),
+            nn.MaxPool2d(10, 62)
+        )
+        self.output = nn.Sequential(
+            nn.Linear(64, output_size),
+            nn.Softmax()
+        )
+
+    def forward(self, x):
+        x = x.reshape(x.shape[0], 1, x.shape[1], x.shape[2])
+        x = self.net(x).squeeze(-1).squeeze(-1)
+        print(x.shape)
+        x = self.output(x)
+        return x
+
+
 class Solver(object):
     def __init__(self, params) -> None:
         super(Solver, self).__init__()
         self.params = params
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        self.model = TransModel(params['feature_type'], output_size=10).to(self.device)
+        self.model = LinearModel(params['feature_type'], output_size=10).to(self.device)
         if params['test'] == True:
             self.model.load_state_dict(torch.load(params['model_path'], map_location=self.device))
 
@@ -215,7 +300,7 @@ class Solver(object):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                self.logger.add_scalar('Train/loss', loss.item()/data.shape[0])
+                self.logger.add_scalar('Train/loss', loss.item()/data.shape[0], i)
 
             if i%self.params['eval_interval'] == 0:
                 avg_loss = 0
@@ -231,10 +316,12 @@ class Solver(object):
                     avg_loss += loss.item()
                     accurate += int((result.argmax(dim=1)==label).sum())
                     count += data.shape[0]
-                self.logger.add_scalar('Eval/loss', avg_loss/count)
-                self.logger.add_scalar('Eval/accuracy', accurate/count)
+                self.logger.add_scalar('Eval/loss', avg_loss/count, i)
+                self.logger.add_scalar('Eval/accuracy', accurate/count, i)
                 print('eval loss:{}'.format(avg_loss/count))
                 print('eval acc:{}'.format(accurate/count))
+            if i%self.params['save_interval'] == 0:
+                self.save(i)
 
     def save(self, epoch):
         if not os.path.exists(self.params['saving_dir']):
@@ -249,10 +336,11 @@ if __name__ == '__main__':
         'feature_type': 'mel',
         'lr': 0.001,
         'batch_size': 64,
-        'logger_dir': 'results',
+        'logger_dir': 'log',
         'saving_dir': 'results',
-        'eval_interval': 10,
-        'epoch': 1000
+        'eval_interval': 1,
+        'save_interval': 50,
+        'epoch': 2000
     }
     solver = Solver(params)
     solver.train()
