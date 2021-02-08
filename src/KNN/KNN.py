@@ -45,28 +45,23 @@ def LabelTransfer(label):
 
 def kNN_Classify(inX, dataSet, labels, k):
 
-    #inXΪ����������dadaSetΪ�ܵ�ѵ������labelsΪѵ������Ӧ�ķ��࣬k����ȡ20
     dataSetSize = dataSet.shape[0]
     diffMat = np.tile(inX, (dataSetSize, 1)) - dataSet
     sqDiffMat = diffMat ** 2
     sqDistances = sqDiffMat.sum(axis = 1)
-    distances = sqDistances ** 0.5  #�����
+    distances = sqDistances ** 0.5  
     sortedDistIndicies = distances.argsort()
-    #argsort�������ص�������ֵ��С���������ֵ
-    classCount = {} # ����һ���ֵ�
-    #ѡ��k�������
+    classCount = {} 
     for i in range(k):
         voteLabel = labels[sortedDistIndicies[i]]
-        #����k��������и������ֵĴ���
         classCount[voteLabel] = classCount.get(voteLabel, 0) + 1
  
-    # ���س��ִ�����������ǩ
     maxCount = 0
     for key, value in classCount.items():
         if value > maxCount:
             maxCount = value
             maxIndex = key
-    return maxIndex   #����inX��Ӧ�ķ���
+    return maxIndex
 
 class Solver(object):
     def __init__(self, params) -> None:
